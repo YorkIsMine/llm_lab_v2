@@ -1,0 +1,64 @@
+// LLM Lab v2 — SQLite schema
+// Prisma: chosen for mature TS support, migrations, type-safe client, excellent SQLite support.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model ChatSession {
+  id        String   @id @default(cuid())
+  title     String   @default("New Chat")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages      Message[]
+  workingMemory WorkingMemory[]
+
+  @@index([updatedAt])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  sessionId String
+  role      String   // "user" | "assistant" | "system"
+  content   String
+  createdAt DateTime @default(now())
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([sessionId, createdAt])
+}
+
+model WorkingMemory {
+  id        String   @id @default(cuid())
+  sessionId String   @unique
+  contentText String
+  contentJson String // JSON string
+  updatedAt DateTime @updatedAt
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
+
+// Long-term: user profile, preferences, stable facts. NOT tied to session — survives chat deletion.
+model LongTermMemory {
+  id          String   @id @default(cuid())
+  scope       String   // "user" | "global"
+  key         String
+  contentText String
+  contentJson String
+  tags        String   // comma-separated or JSON array string for keyword/embedding search
+  embedding   Bytes?   // TODO: optional embedding blob for similarity search
+  updatedAt   DateTime @updatedAt
+
+  @@unique([scope, key])
+  @@index([scope])
+  @@index([tags])
+}
