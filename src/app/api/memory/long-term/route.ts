@@ -3,13 +3,27 @@ import * as memory from "@/services/memoryService";
 
 /** GET /api/memory/long-term — all long-term memory (user + global) */
 export async function GET(request: Request) {
-  const scope = request.nextUrl.searchParams.get("scope") as "user" | "global" | null;
+  const url = new URL(request.url);
+  const scope = url.searchParams.get("scope") as "user" | "global" | null;
   try {
     const items = await memory.getLongTermMemory(scope ?? undefined);
     return NextResponse.json({ items });
   } catch (e) {
     console.error("[GET /api/memory/long-term]", e);
     return NextResponse.json({ error: "Failed to load long-term memory" }, { status: 500 });
+  }
+}
+
+/** DELETE /api/memory/long-term — clear long-term memory. Query: ?scope=user|global (default user). */
+export async function DELETE(request: Request) {
+  const url = new URL(request.url);
+  const scope = (url.searchParams.get("scope") === "global" ? "global" : "user") as "user" | "global";
+  try {
+    await memory.clearLongTermMemory(scope);
+    return NextResponse.json({ ok: true, scope });
+  } catch (e) {
+    console.error("[DELETE /api/memory/long-term]", e);
+    return NextResponse.json({ error: "Failed to clear long-term memory" }, { status: 500 });
   }
 }
 

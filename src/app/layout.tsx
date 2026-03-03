@@ -1,5 +1,12 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
+import { AppShell } from "@/components/AppShell";
+
+const inter = Inter({
+  subsets: ["latin", "cyrillic"],
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "LLM Lab — Chat",
@@ -13,8 +20,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru">
-      <body className="antialiased bg-zinc-950 text-zinc-100 min-h-screen">
-        {children}
+      <body className={`${inter.className} min-h-screen text-[rgb(var(--cyber-text))]`}>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

@@ -1,36 +1,69 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LLM Lab v2
 
-## Getting Started
+Чат с LLM (OpenAI) на Next.js 14 (App Router) и TypeScript с тремя видами памяти: короткая (окно сообщений), рабочая и долговременная (SQLite).
 
-First, run the development server:
+## Требования
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- Node.js 18+
+- Аккаунт OpenAI и API key
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Установка и запуск
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Клонировать/перейти в каталог проекта.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+2. Установить зависимости:
+   ```bash
+   npm install
+   ```
 
-## Learn More
+3. Настроить окружение:
+   ```bash
+   cp .env.example .env
+   ```
+   В `.env` задать:
+   - `OPENAI_API_KEY=sk-...` (обязательно)
+   - `DATABASE_URL="file:./dev.db"` (по умолчанию SQLite в `prisma/dev.db`)
 
-To learn more about Next.js, take a look at the following resources:
+4. Создать схему БД (SQLite):
+   ```bash
+   npx prisma generate
+   npx prisma db push
+   ```
+   Либо миграции: `npx prisma migrate dev --name init`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+5. Запуск в режиме разработки:
+   ```bash
+   npm run dev
+   ```
+   Открыть [http://localhost:3000](http://localhost:3000).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Режим работы (без авторизации)
 
-## Deploy on Vercel
+Приложение работает в **single-user** режиме: все чаты доступны без входа. В продакшене нужно добавить аутентификацию и привязку сессий к пользователю.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## API
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `POST /api/sessions` — создать чат
+- `GET /api/sessions` — список чатов
+- `DELETE /api/sessions/:id` — удалить чат (каскадно удаляются сообщения и рабочая память; долговременная сохраняется)
+- `GET /api/sessions/:id/messages` — история сообщений
+- `POST /api/sessions/:id/messages` — отправить сообщение (body: `{ "content": "..." }`)
+- `GET /api/sessions/:id/memory` — short / working / long-term память для чата
+- `GET /api/memory/long-term?scope=user|global` — долговременная память
+- `POST /api/memory/long-term` — создать/обновить запись (body: `{ "scope", "id", "contentText", "contentJson", "tags" }`)
+
+## Memory Inspector
+
+В интерфейсе чата есть ссылка «Memory Inspector» — страница с тремя вкладками:
+- **Short** — последние N сообщений (окно контекста)
+- **Working** — рабочая память текущего чата (текст + JSON)
+- **Long-term** — элементы долговременной памяти (user + global)
+
+## Стек
+
+- Next.js 14 (App Router), TypeScript
+- Prisma + SQLite
+- OpenAI Chat Completions API (ключ только на сервере, в env)
+- Tailwind CSS
+
+Подробный план и архитектура — в [PLAN.md](./PLAN.md).

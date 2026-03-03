@@ -17,9 +17,9 @@ function tokenize(text: string): string[] {
 function score(text: string, queryTokens: Set<string>): number {
   const tokens = new Set(tokenize(text));
   let hits = 0;
-  for (const t of queryTokens) {
+  Array.from(queryTokens).forEach((t) => {
     if (tokens.has(t)) hits++;
-  }
+  });
   return queryTokens.size > 0 ? hits / queryTokens.size : 0;
 }
 

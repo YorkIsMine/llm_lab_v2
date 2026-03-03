@@ -42,7 +42,7 @@ export async function getShortMemory(sessionId: string): Promise<ShortMemory> {
   messages.reverse();
   return {
     type: "short",
-    messages: messages.map((m) => ({
+    messages: messages.map((m: { role: string; content: string; createdAt: Date }) => ({
       role: m.role,
       content: m.content,
       createdAt: m.createdAt.toISOString(),
@@ -72,7 +72,7 @@ export async function getLongTermMemory(scope?: "user" | "global"): Promise<Long
     where,
     orderBy: { updatedAt: "desc" },
   });
-  return items.map((item) => ({
+  return items.map((item: { id: string; scope: string; key: string; contentText: string; contentJson: string; tags: string; updatedAt: Date }) => ({
     id: item.id,
     scope: item.scope,
     key: item.key,
@@ -91,9 +91,11 @@ export async function getRelevantLongTerm(userMessage: string, limit = 5): Promi
   const items = await prisma.longTermMemory.findMany({
     where: { id: { in: ids } },
   });
-  const byId = new Map(items.map((i) => [i.id, i]));
-  return ids.map((id) => {
-    const item = byId.get(id)!;
+  type Row = { id: string; scope: string; key: string; contentText: string; contentJson: string; tags: string; updatedAt: Date };
+  const byId = new Map<string, Row>(items.map((i: Row) => [i.id, i]));
+  return ids.map((id: string) => {
+    const item = byId.get(id);
+    if (!item) return null;
     return {
       id: item.id,
       scope: item.scope,
@@ -103,7 +105,7 @@ export async function getRelevantLongTerm(userMessage: string, limit = 5): Promi
       tags: item.tags,
       updatedAt: item.updatedAt.toISOString(),
     };
-  });
+  }).filter((x): x is LongTermMemoryItem => x !== null);
 }
 
 /** Full memory view for a session (for Memory Inspector). */
@@ -123,6 +125,54 @@ export async function setWorkingMemory(sessionId: string, contentText: string, c
     create: { sessionId, contentText, contentJson },
     update: { contentText, contentJson },
   });
+}
+
+const LONG_TERM_SESSION_LIMIT = 25;
+
+/** Normalize text for deduplication: lowercase, collapse spaces, trim. */
+function normalizeForDedup(s: string): string {
+  return s.toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+/** Check if contentText is duplicate of any existing long-term entry (exact or strong overlap). */
+export async function isDuplicateLongTerm(
+  scope: "user" | "global",
+  contentText: string
+): Promise<boolean> {
+  const existing = await getLongTermMemory(scope);
+  const norm = normalizeForDedup(contentText);
+  if (!norm) return true;
+  for (const item of existing) {
+    const existingNorm = normalizeForDedup(item.contentText);
+    if (existingNorm === norm) return true;
+    if (norm.length >= 10 && existingNorm.length >= 10) {
+      if (norm.includes(existingNorm) || existingNorm.includes(norm)) return true;
+    }
+  }
+  return false;
+}
+
+/** Clear all long-term memory for scope (user or global). */
+export async function clearLongTermMemory(scope: "user" | "global"): Promise<void> {
+  await prisma.longTermMemory.deleteMany({ where: { scope } });
+}
+
+/** Long-term items to include in every session (recent first, limited). */
+export async function getLongTermForSession(scope: "user" | "global" = "user"): Promise<LongTermMemoryItem[]> {
+  const items = await prisma.longTermMemory.findMany({
+    where: { scope },
+    orderBy: { updatedAt: "desc" },
+    take: LONG_TERM_SESSION_LIMIT,
+  });
+  return items.map((item: { id: string; scope: string; key: string; contentText: string; contentJson: string; tags: string; updatedAt: Date }) => ({
+    id: item.id,
+    scope: item.scope,
+    key: item.key,
+    contentText: item.contentText,
+    contentJson: item.contentJson,
+    tags: item.tags,
+    updatedAt: item.updatedAt.toISOString(),
+  }));
 }
 
 /** Add or update long-term memory by (scope, key). */
