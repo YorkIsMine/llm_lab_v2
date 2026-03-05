@@ -15,6 +15,20 @@ export interface ChatCompletionOptions {
   temperature?: number;
 }
 
+export interface ValidationChecklistItem {
+  item: string;
+  status: "done" | "partial" | "missing";
+  notes: string;
+}
+
+export interface ValidationAssessment {
+  passed: boolean;
+  checklist: ValidationChecklistItem[];
+  risks: string[];
+  verificationSteps: string[];
+  fixes: string[];
+}
+
 /**
  * Single call to OpenAI Chat Completions API.
  * All context (system, long-term, working, short) must be assembled by caller.
@@ -39,6 +53,91 @@ export async function createChatCompletion(
     : undefined;
 
   return { content, usage };
+}
+
+/**
+ * Validation stage with structured output.
+ * Returns checklist + pass/fail that can drive deterministic state transitions.
+ */
+export async function createValidationCompletion(
+  requirements: string[],
+  executionResult: string,
+  options: ChatCompletionOptions = {}
+): Promise<{ assessment: ValidationAssessment; usage?: { promptTokens: number; completionTokens: number } }> {
+  const systemPrompt = `CURRENT_PHASE=Validation
+You validate whether an execution result satisfies the user's requirements.
+Return ONLY valid JSON with this exact shape:
+{
+  "passed": boolean,
+  "checklist": [{ "item": string, "status": "done" | "partial" | "missing", "notes": string }],
+  "risks": string[],
+  "verificationSteps": string[],
+  "fixes": string[]
+}
+Rules:
+- "passed" is true only when all critical requirements are satisfied.
+- Use concise checklist items.
+- If passed=true, fixes can be empty.
+- No markdown, no extra keys.`;
+
+  const openai = getOpenAI();
+  const response = await openai.chat.completions.create({
+    model: options.model ?? "gpt-4o-mini",
+    messages: [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: `Requirements:\n${requirements.length > 0 ? requirements.map((r, i) => `${i + 1}. ${r}`).join("\n") : "1. (No explicit requirements found)"}\n\nExecution result:\n${executionResult}`,
+      },
+    ],
+    max_tokens: options.maxTokens ?? 800,
+    temperature: options.temperature ?? 0.2,
+    response_format: { type: "json_object" },
+  });
+
+  const raw = response.choices[0]?.message?.content?.trim() ?? "{}";
+  let parsed: ValidationAssessment;
+  try {
+    parsed = JSON.parse(raw) as ValidationAssessment;
+  } catch {
+    parsed = {
+      passed: false,
+      checklist: [{ item: "Parsing validation output", status: "missing", notes: "Could not parse JSON response." }],
+      risks: ["Validation output parsing failed."],
+      verificationSteps: ["Re-run validation with clearer requirements."],
+      fixes: ["Repeat execution and validation."],
+    };
+  }
+
+  const checklist = Array.isArray(parsed.checklist)
+    ? parsed.checklist
+        .filter((item) => item && typeof item.item === "string")
+        .map((item) => ({
+          item: item.item.trim(),
+          status:
+            item.status === "done" || item.status === "partial" || item.status === "missing"
+              ? item.status
+              : "missing",
+          notes: typeof item.notes === "string" ? item.notes.trim() : "",
+        }))
+        .filter((item) => item.item.length > 0)
+    : [];
+
+  const safeAssessment: ValidationAssessment = {
+    passed: parsed.passed === true && checklist.every((item) => item.status === "done"),
+    checklist,
+    risks: Array.isArray(parsed.risks) ? parsed.risks.map((r) => String(r).trim()).filter(Boolean) : [],
+    verificationSteps: Array.isArray(parsed.verificationSteps)
+      ? parsed.verificationSteps.map((s) => String(s).trim()).filter(Boolean)
+      : [],
+    fixes: Array.isArray(parsed.fixes) ? parsed.fixes.map((f) => String(f).trim()).filter(Boolean) : [],
+  };
+
+  const usage = response.usage
+    ? { promptTokens: response.usage.prompt_tokens, completionTokens: response.usage.completion_tokens }
+    : undefined;
+
+  return { assessment: safeAssessment, usage };
 }
 
 /** One long-term memory entry with optional category tag (solutions from assistant are not stored). */

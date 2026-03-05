@@ -13,6 +13,7 @@ datasource db {
 model ChatSession {
   id        String   @id @default(cuid())
   title     String   @default("New Chat")
+  agentPhase String  @default("Planning")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

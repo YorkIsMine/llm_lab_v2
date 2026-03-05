@@ -3,10 +3,12 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import type { AgentPhase } from "@/types/agentPhase";
 
 interface Session {
   id: string;
   title: string;
+  phase: AgentPhase;
   createdAt: string;
   updatedAt: string;
 }
@@ -16,6 +18,8 @@ export function ChatSidebar() {
   const router = useRouter();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const fetchSessions = useCallback(async () => {
     try {
@@ -34,11 +38,27 @@ export function ChatSidebar() {
   }, [fetchSessions]);
 
   const createSession = async () => {
-    const res = await fetch("/api/sessions", { method: "POST" });
-    if (res.ok) {
-      const session = await res.json();
+    if (creating) return;
+    setCreateError(null);
+    setCreating(true);
+    try {
+      const res = await fetch("/api/sessions", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setCreateError(data?.error ?? "Не удалось создать чат");
+        return;
+      }
+      const session = data as Session;
+      if (!session?.id) {
+        setCreateError("Неверный ответ сервера");
+        return;
+      }
       setSessions((prev) => [session, ...prev]);
       router.push(`/chat/${session.id}`);
+    } catch {
+      setCreateError("Ошибка сети или сервера");
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -65,13 +85,21 @@ export function ChatSidebar() {
         </h1>
         <p className="text-[10px] uppercase tracking-[0.2em] text-[rgb(var(--cyber-muted))] mt-1">Neural Interface</p>
       </div>
-      <button
-        type="button"
-        onClick={createSession}
-        className="mx-4 mt-5 py-3.5 rounded-sm bg-transparent border-2 border-[rgb(var(--cyber-cyan))] text-[rgb(var(--cyber-cyan))] text-sm font-semibold uppercase tracking-wider transition-smooth hover:bg-[rgba(0,245,255,0.1)] hover:shadow-[0_0_20px_-4px_rgba(0,245,255,0.4)] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--cyber-cyan))] focus:ring-offset-2 focus:ring-offset-[rgb(var(--cyber-panel))]"
-      >
-        + Новый чат
-      </button>
+      <div className="mx-4 mt-5">
+        <button
+          type="button"
+          onClick={createSession}
+          disabled={creating}
+          className="w-full py-3.5 rounded-sm bg-transparent border-2 border-[rgb(var(--cyber-cyan))] text-[rgb(var(--cyber-cyan))] text-sm font-semibold uppercase tracking-wider transition-smooth hover:bg-[rgba(0,245,255,0.1)] hover:shadow-[0_0_20px_-4px_rgba(0,245,255,0.4)] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--cyber-cyan))] focus:ring-offset-2 focus:ring-offset-[rgb(var(--cyber-panel))] disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {creating ? "Создание…" : "+ Новый чат"}
+        </button>
+        {createError && (
+          <p className="mt-2 text-xs text-[rgb(var(--cyber-magenta))] px-1" role="alert">
+            {createError}
+          </p>
+        )}
+      </div>
       <nav className="flex-1 overflow-y-auto p-3 mt-4">
         {loading && sessions.length === 0 ? (
           <p className="text-[rgb(var(--cyber-muted))] text-xs px-3 py-2 uppercase tracking-wider">Загрузка…</p>

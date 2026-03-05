@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { sendMessage } from "@/services/chatService";
+import { coerceAgentPhase } from "@/types/agentPhase";
 
 /** GET /api/sessions/:id/messages — history */
 export async function GET(
@@ -9,19 +10,31 @@ export async function GET(
 ) {
   const { id: sessionId } = await params;
   try {
-    const messages = await prisma.message.findMany({
-      where: { sessionId },
-      orderBy: { createdAt: "asc" },
-    });
-    return NextResponse.json(
-      messages.map((m) => ({
+    const [session, messages] = await Promise.all([
+      prisma.chatSession.findUnique({
+        where: { id: sessionId },
+        select: { id: true, agentPhase: true },
+      }),
+      prisma.message.findMany({
+        where: { sessionId },
+        orderBy: { createdAt: "asc" },
+      }),
+    ]);
+
+    if (!session) {
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+
+    return NextResponse.json({
+      phase: coerceAgentPhase(session.agentPhase),
+      messages: messages.map((m) => ({
         id: m.id,
         sessionId: m.sessionId,
         role: m.role,
         content: m.content,
         createdAt: m.createdAt.toISOString(),
-      }))
-    );
+      })),
+    });
   } catch (e) {
     console.error("[GET /api/sessions/:id/messages]", e);
     return NextResponse.json({ error: "Failed to load messages" }, { status: 500 });

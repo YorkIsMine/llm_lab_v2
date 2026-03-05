@@ -3,6 +3,7 @@
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { MemoryInspectorPanel } from "@/components/MemoryInspectorPanel";
+import { DEFAULT_AGENT_PHASE, type AgentPhase } from "@/types/agentPhase";
 
 interface Message {
   id: string;
@@ -17,6 +18,18 @@ interface TokenUsage {
   totalTokens: number;
 }
 
+interface MessagesResponse {
+  phase: AgentPhase;
+  messages: Message[];
+}
+
+const PHASE_BADGE_STYLES: Record<AgentPhase, string> = {
+  Planning: "text-[rgb(var(--cyber-muted))] border-[rgba(255,255,255,0.25)] bg-[rgba(255,255,255,0.06)]",
+  Execution: "text-[rgb(var(--cyber-cyan))] border-[rgba(0,245,255,0.35)] bg-[rgba(0,245,255,0.08)]",
+  Validation: "text-[rgb(var(--cyber-magenta))] border-[rgba(255,0,255,0.35)] bg-[rgba(255,0,255,0.08)]",
+  Done: "text-[#8bff7f] border-[rgba(139,255,127,0.35)] bg-[rgba(139,255,127,0.08)]",
+};
+
 export default function ChatPage() {
   const params = useParams();
   const router = useRouter();
@@ -29,6 +42,7 @@ export default function ChatPage() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [lastUsage, setLastUsage] = useState<TokenUsage | null>(null);
   const [totalSessionTokens, setTotalSessionTokens] = useState(0);
+  const [phase, setPhase] = useState<AgentPhase>(DEFAULT_AGENT_PHASE);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,7 +64,14 @@ export default function ChatPage() {
       const res = await fetch(`/api/sessions/${id}/messages`);
       if (res.ok) {
         const data = await res.json();
-        setMessages(data);
+        if (Array.isArray(data)) {
+          setMessages(data as Message[]);
+          setPhase(DEFAULT_AGENT_PHASE);
+        } else {
+          const typed = data as MessagesResponse;
+          setMessages(Array.isArray(typed.messages) ? typed.messages : []);
+          setPhase(typed.phase ?? DEFAULT_AGENT_PHASE);
+        }
       } else if (res.status === 404) {
         router.replace("/");
       }
@@ -66,6 +87,7 @@ export default function ChatPage() {
   useEffect(() => {
     setLastUsage(null);
     setTotalSessionTokens(0);
+    setPhase(DEFAULT_AGENT_PHASE);
   }, [id]);
 
   useEffect(() => {
@@ -107,6 +129,9 @@ export default function ChatPage() {
         setLastUsage(assistant.usage);
         setTotalSessionTokens((t) => t + assistant.usage.totalTokens);
       }
+      if (assistant.phase) {
+        setPhase(assistant.phase as AgentPhase);
+      }
       setMessages((prev) =>
         prev.map((m) =>
           m.id === loadingId
@@ -141,7 +166,14 @@ export default function ChatPage() {
       <div className="flex-1 min-h-0 flex justify-center">
         <div className="w-full max-w-xl flex flex-col flex-1 min-h-0">
           <header className="flex items-center justify-between shrink-0 py-3 px-4 border-b border-[rgba(0,245,255,0.2)]">
-            <span className="text-[10px] text-[rgb(var(--cyber-muted))] uppercase tracking-[0.2em]">Чат</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-[rgb(var(--cyber-muted))] uppercase tracking-[0.2em]">Чат</span>
+              <span
+                className={`text-[10px] uppercase tracking-[0.2em] px-2 py-1 border rounded-sm ${PHASE_BADGE_STYLES[phase]}`}
+              >
+                {phase}
+              </span>
+            </div>
             <button
               type="button"
               onClick={openMemory}
