@@ -63,3 +63,30 @@ model LongTermMemory {
   @@index([scope])
   @@index([tags])
 }
+
+// Hard non-negotiable rules for assistant behavior. Stored separately from chat history.
+model Invariant {
+  id                String   @id @default(cuid())
+  title             String
+  rule              String
+  scopeType         String   // "user" | "workspace" | "global"
+  scopeId           String?
+  status            String   @default("active") // "active" | "archived"
+  priority          Int      @default(100)
+  tags              String   @default("")
+  examplesAllowed   String?
+  examplesForbidden String?
+  createdBy         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([scopeType, scopeId, status])
+  @@index([status, updatedAt])
+}
+
+// Small key-value store for policy toggles (e.g. invariants enabled/disabled).
+model AssistantSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

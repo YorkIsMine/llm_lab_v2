@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import type { Invariant } from "@/types/invariant";
 
 function getOpenAI(): OpenAI {
   const key = process.env.OPENAI_API_KEY;
@@ -29,6 +30,12 @@ export interface ValidationAssessment {
   fixes: string[];
 }
 
+export interface InvariantCriticAssessment {
+  violates: boolean;
+  violatedIds: string[];
+  summary: string;
+}
+
 /**
  * Single call to OpenAI Chat Completions API.
  * All context (system, long-term, working, short) must be assembled by caller.
@@ -53,6 +60,78 @@ export async function createChatCompletion(
     : undefined;
 
   return { content, usage };
+}
+
+/**
+ * Lightweight critic that checks whether assistant draft violates active invariants.
+ * Returns strict JSON that can be used by runtime guard.
+ */
+export async function createInvariantCriticCompletion(
+  userMessage: string,
+  draftAnswer: string,
+  invariants: Invariant[],
+  options: ChatCompletionOptions = {}
+): Promise<{ assessment: InvariantCriticAssessment; usage?: { promptTokens: number; completionTokens: number } }> {
+  if (invariants.length === 0) {
+    return { assessment: { violates: false, violatedIds: [], summary: "" } };
+  }
+
+  const systemPrompt = `You are an invariant compliance critic.
+Return ONLY valid JSON with this exact shape:
+{
+  "violates": boolean,
+  "violatedIds": string[],
+  "summary": string
+}
+Rules:
+- violatedIds must contain only ids from the provided invariant list.
+- If the draft answer suggests violating any invariant, set violates=true.
+- If unsure, prefer violates=true for safety.
+- No markdown, no extra keys.`;
+
+  const invariantList = invariants
+    .map((item) => `- ${item.id}: ${item.title} :: ${item.rule}`)
+    .join("\n");
+
+  const openai = getOpenAI();
+  const response = await openai.chat.completions.create({
+    model: options.model ?? "gpt-4o-mini",
+    messages: [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: `User request:\n${userMessage}\n\nDraft answer:\n${draftAnswer}\n\nInvariants:\n${invariantList}`,
+      },
+    ],
+    max_tokens: options.maxTokens ?? 300,
+    temperature: options.temperature ?? 0,
+    response_format: { type: "json_object" },
+  });
+
+  const raw = response.choices[0]?.message?.content?.trim() ?? "{}";
+  let parsed: InvariantCriticAssessment;
+  try {
+    parsed = JSON.parse(raw) as InvariantCriticAssessment;
+  } catch {
+    parsed = { violates: false, violatedIds: [], summary: "" };
+  }
+
+  const allowedIds = new Set(invariants.map((item) => item.id));
+  const violatedIds = Array.isArray(parsed.violatedIds)
+    ? parsed.violatedIds.map((id) => String(id)).filter((id) => allowedIds.has(id))
+    : [];
+
+  const safe: InvariantCriticAssessment = {
+    violates: parsed.violates === true || violatedIds.length > 0,
+    violatedIds,
+    summary: typeof parsed.summary === "string" ? parsed.summary.trim() : "",
+  };
+
+  const usage = response.usage
+    ? { promptTokens: response.usage.prompt_tokens, completionTokens: response.usage.completion_tokens }
+    : undefined;
+
+  return { assessment: safe, usage };
 }
 
 /**

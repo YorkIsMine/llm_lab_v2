@@ -30,6 +30,10 @@ const PHASE_BADGE_STYLES: Record<AgentPhase, string> = {
   Done: "text-[#8bff7f] border-[rgba(139,255,127,0.35)] bg-[rgba(139,255,127,0.08)]",
 };
 
+function isInvariantCommand(text: string): boolean {
+  return /^\/invariants\b/i.test(text.trim());
+}
+
 export default function ChatPage() {
   const params = useParams();
   const router = useRouter();
@@ -97,19 +101,22 @@ export default function ChatPage() {
   const send = async () => {
     const text = input.trim();
     if (!text || sending) return;
+    const commandMessage = isInvariantCommand(text);
     setInput("");
-    const userMsg: Message = {
-      id: "u-" + Date.now(),
-      role: "user",
-      content: text,
-      createdAt: new Date().toISOString(),
-    };
     const loadingId = "loading-" + Date.now();
-    setMessages((prev) => [
-      ...prev,
-      userMsg,
-      { id: loadingId, role: "assistant", content: "", createdAt: "" },
-    ]);
+    setMessages((prev) => {
+      if (commandMessage) {
+        return [...prev, { id: loadingId, role: "assistant", content: "", createdAt: "" }];
+      }
+
+      const userMsg: Message = {
+        id: "u-" + Date.now(),
+        role: "user",
+        content: text,
+        createdAt: new Date().toISOString(),
+      };
+      return [...prev, userMsg, { id: loadingId, role: "assistant", content: "", createdAt: "" }];
+    });
     setSending(true);
     try {
       const res = await fetch(`/api/sessions/${id}/messages`, {
@@ -121,7 +128,9 @@ export default function ChatPage() {
         const err = await res.json().catch(() => ({}));
         alert(err.error || "Ошибка отправки");
         setMessages((prev) => prev.filter((m) => m.id !== loadingId));
-        setInput(text);
+        if (!commandMessage) {
+          setInput(text);
+        }
         return;
       }
       const assistant = await res.json();
@@ -146,7 +155,9 @@ export default function ChatPage() {
       );
     } catch {
       setMessages((prev) => prev.filter((m) => m.id !== loadingId));
-      setInput(text);
+      if (!commandMessage) {
+        setInput(text);
+      }
       alert("Ошибка отправки");
     } finally {
       setSending(false);

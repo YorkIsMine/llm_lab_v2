@@ -66,16 +66,18 @@ export async function POST(
 
     const result = await sendMessage(sessionId, content);
 
-    const updated = await prisma.chatSession.update({
-      where: { id: sessionId },
-      data: { updatedAt: new Date() },
-    });
-    if (updated.title === "New Chat") {
-      const title = content.slice(0, 50) + (content.length > 50 ? "…" : "");
-      await prisma.chatSession.update({
+    if (!result.commandHandled) {
+      const updated = await prisma.chatSession.update({
         where: { id: sessionId },
-        data: { title },
+        data: { updatedAt: new Date() },
       });
+      if (updated.title === "New Chat") {
+        const title = content.slice(0, 50) + (content.length > 50 ? "…" : "");
+        await prisma.chatSession.update({
+          where: { id: sessionId },
+          data: { title },
+        });
+      }
     }
 
     return NextResponse.json(result);

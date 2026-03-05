@@ -9,6 +9,7 @@ import {
 import { coerceAgentPhase, type AgentPhase } from "@/types/agentPhase";
 import * as memory from "./memoryService";
 import { buildContextForSession } from "./contextService";
+import { DEFAULT_INVARIANT_SCOPE_CONTEXT } from "@/types/invariant";
 import {
   hasTaskContext,
   isProceedCommand,
@@ -16,6 +17,9 @@ import {
   transitionAfterExecution,
   transitionAfterValidation,
 } from "./agentPhaseMachine";
+import { handleInvariantCommand } from "./invariantCommandService";
+import { applyInvariantGuard, ensureInvariantCheck, runInvariantPrecheck } from "./invariantGuard";
+import { areInvariantsEnabled, listInvariants } from "./invariantService";
 
 export interface TokenUsage {
   promptTokens: number;
@@ -30,6 +34,7 @@ export interface SendMessageResult {
   createdAt: string;
   phase: AgentPhase;
   usage?: TokenUsage;
+  commandHandled?: boolean;
 }
 
 const CLEAR_MEMORY_PHRASES = [
@@ -164,6 +169,20 @@ export async function sendMessage(sessionId: string, userContent: string): Promi
   }
 
   const currentPhase = coerceAgentPhase(session.agentPhase);
+
+  const invariantCommand = await handleInvariantCommand(userContent, DEFAULT_INVARIANT_SCOPE_CONTEXT);
+  if (invariantCommand.handled) {
+    const commandReply = ensureInvariantCheck(invariantCommand.content ?? "Готово.", "OK");
+    return {
+      messageId: `invariant-cmd-${Date.now()}`,
+      role: "assistant",
+      content: commandReply,
+      createdAt: new Date().toISOString(),
+      phase: currentPhase,
+      commandHandled: true,
+    };
+  }
+
   const userHistory = previousUserMessages.map((m) => m.content);
   const canProceed = hasTaskContext(userHistory);
   const phaseForTurn = resolvePhaseForUserMessage({
@@ -176,19 +195,44 @@ export async function sendMessage(sessionId: string, userContent: string): Promi
     data: { sessionId, role: "user", content: userContent },
   });
 
+  const [invariantsEnabled, activeInvariants] = await Promise.all([
+    areInvariantsEnabled(DEFAULT_INVARIANT_SCOPE_CONTEXT),
+    listInvariants(DEFAULT_INVARIANT_SCOPE_CONTEXT, { status: "active" }),
+  ]);
+  const precheck = runInvariantPrecheck({
+    userMessage: userContent,
+    invariants: activeInvariants,
+    enabled: invariantsEnabled,
+  });
+
   let assistantContent = "";
   let nextPhase: AgentPhase = phaseForTurn;
   const usageParts: Array<{ promptTokens: number; completionTokens: number } | undefined> = [];
 
-  if (phaseForTurn === "Planning") {
-    const planningMessages = await buildContextForSession(sessionId, "Planning");
+  if (precheck.decision.decision !== "ALLOW") {
+    assistantContent = precheck.content ?? ensureInvariantCheck("Не могу предложить этот путь из-за активных инвариантов.", "REFUSED");
+    nextPhase = "Planning";
+  } else if (phaseForTurn === "Planning") {
+    const planningMessages = await buildContextForSession(sessionId, "Planning", {
+      enabled: invariantsEnabled,
+      invariants: activeInvariants,
+      constraints: precheck.constraints,
+      requestProposal: precheck.proposal,
+      preGenerationDecision: precheck.decision,
+    });
 
     const planningResult = await createChatCompletion(planningMessages);
     usageParts.push(planningResult.usage);
     assistantContent = sanitizePlanningReply(planningResult.content);
     nextPhase = "Planning";
   } else if (phaseForTurn === "Execution") {
-    const executionMessages = await buildContextForSession(sessionId, "Execution");
+    const executionMessages = await buildContextForSession(sessionId, "Execution", {
+      enabled: invariantsEnabled,
+      invariants: activeInvariants,
+      constraints: precheck.constraints,
+      requestProposal: precheck.proposal,
+      preGenerationDecision: precheck.decision,
+    });
 
     const executionResult = await createChatCompletion(executionMessages);
     usageParts.push(executionResult.usage);
@@ -205,7 +249,13 @@ export async function sendMessage(sessionId: string, userContent: string): Promi
     nextPhase = transitionAfterValidation(validationResult.assessment.passed);
     assistantContent = formatExecutionResponse(executionContent, validationResult.assessment, nextPhase);
   } else if (phaseForTurn === "Done") {
-    const doneMessages = await buildContextForSession(sessionId, "Done");
+    const doneMessages = await buildContextForSession(sessionId, "Done", {
+      enabled: invariantsEnabled,
+      invariants: activeInvariants,
+      constraints: precheck.constraints,
+      requestProposal: precheck.proposal,
+      preGenerationDecision: precheck.decision,
+    });
     const doneResult = await createChatCompletion(doneMessages);
     usageParts.push(doneResult.usage);
     assistantContent = doneResult.content.trim() || formatDoneSection();
@@ -213,6 +263,34 @@ export async function sendMessage(sessionId: string, userContent: string): Promi
   } else {
     throw new Error(`Unsupported phase transition for message: ${phaseForTurn}`);
   }
+
+  let guardResult = {
+    content: assistantContent,
+    status: precheck.decision.decision === "REFUSE" ? ("REFUSED" as const) : ("OK" as const),
+    violatedIds: precheck.decision.violatedConstraints,
+    refused: precheck.decision.decision === "REFUSE",
+    repairTriggered: precheck.decision.decision !== "ALLOW",
+    constraints: precheck.constraints,
+    proposal: precheck.proposal,
+    decision: precheck.decision,
+  };
+
+  if (precheck.decision.decision === "ALLOW") {
+    guardResult = applyInvariantGuard({
+      userMessage: userContent,
+      draftAnswer: assistantContent,
+      invariants: activeInvariants,
+      enabled: invariantsEnabled,
+    });
+    assistantContent = guardResult.content;
+    if (guardResult.status !== "OK") {
+      nextPhase = "Planning";
+    }
+  }
+
+  console.info(
+    `[invariants] session=${sessionId} enabled=${invariantsEnabled} applied=${activeInvariants.map((i) => i.id).join(",") || "-"} constraints=${precheck.constraints.map((constraint) => constraint.id).join(",") || "-"} pre=${precheck.decision.decision} post=${guardResult.decision.decision} repair=${guardResult.repairTriggered} violated=${guardResult.violatedIds.join(",") || "-"}`
+  );
 
   const assistant = await prisma.message.create({
     data: { sessionId, role: "assistant", content: assistantContent },
@@ -223,7 +301,9 @@ export async function sendMessage(sessionId: string, userContent: string): Promi
     data: { agentPhase: nextPhase },
   });
 
-  await updateMemoriesAfterReply(sessionId, userContent, assistantContent);
+  if (guardResult.status === "OK") {
+    await updateMemoriesAfterReply(sessionId, userContent, assistantContent);
+  }
 
   const tokenUsage = mergeTokenUsage(usageParts);
 

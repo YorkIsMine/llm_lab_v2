@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { AgentPhase } from "@/types/agentPhase";
+import { InvariantPanel } from "./InvariantPanel";
 
 interface Session {
   id: string;
@@ -20,6 +21,7 @@ export function ChatSidebar() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [invariantsOpen, setInvariantsOpen] = useState(false);
 
   const fetchSessions = useCallback(async () => {
     try {
@@ -99,6 +101,13 @@ export function ChatSidebar() {
             {createError}
           </p>
         )}
+        <button
+          type="button"
+          onClick={() => setInvariantsOpen(true)}
+          className="mt-3 w-full py-2.5 rounded-sm bg-transparent border border-[rgba(255,0,255,0.35)] text-[rgb(var(--cyber-magenta))] text-xs font-semibold uppercase tracking-wider transition-smooth hover:bg-[rgba(255,0,255,0.08)] hover:shadow-[0_0_16px_-5px_rgba(255,0,255,0.4)] focus:outline-none"
+        >
+          Инварианты
+        </button>
       </div>
       <nav className="flex-1 overflow-y-auto p-3 mt-4">
         {loading && sessions.length === 0 ? (
@@ -136,6 +145,7 @@ export function ChatSidebar() {
         )}
       </nav>
       <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[rgba(255,0,255,0.3)] to-transparent" />
+      {invariantsOpen && <InvariantPanel onClose={() => setInvariantsOpen(false)} />}
     </aside>
   );
 }

@@ -1,6 +1,7 @@
 # LLM Lab v2
 
 Чат с LLM (OpenAI) на Next.js 14 (App Router) и TypeScript с тремя видами памяти: короткая (окно сообщений), рабочая и долговременная (SQLite).
+Также поддерживаются **инварианты ассистента**: жёсткие правила, которые хранятся отдельно от истории чата и принудительно применяются к каждому ответу.
 
 ## Фазовая модель агента
 
@@ -64,6 +65,11 @@
 - `GET /api/sessions/:id/memory` — short / working / long-term память для чата
 - `GET /api/memory/long-term?scope=user|global` — долговременная память
 - `POST /api/memory/long-term` — создать/обновить запись (body: `{ "scope", "id", "contentText", "contentJson", "tags" }`)
+- `GET /api/invariants?status=active|archived|all` — список инвариантов + флаг применения (`enabled`)
+- `POST /api/invariants` — создать инвариант
+- `PATCH /api/invariants` — включить/выключить применение (`{ "enabled": true|false }`)
+- `PATCH /api/invariants/:id` — редактировать инвариант
+- `DELETE /api/invariants/:id` — архивировать инвариант
 
 ## Расширение фаз
 
@@ -80,6 +86,29 @@
 - **Short** — последние N сообщений (окно контекста)
 - **Working** — рабочая память текущего чата (текст + JSON)
 - **Long-term** — элементы долговременной памяти (user + global)
+
+## Инварианты ассистента
+
+Инварианты — это non-negotiable правила (архитектура, ограничения стека, бизнес-ограничения), которые ассистент не имеет права нарушать.
+
+- Хранятся отдельно от чата в SQLite (`Invariant`, `AssistantSetting`).
+- Подмешиваются в LLM-контекст отдельным system-блоком `INVARIANTS (non-negotiable)` вместе с нормализованными `Constraint`.
+- Не попадают в историю сообщений пользователя/ассистента.
+- Перед выдачей ответа работает двухконтурный enforcement: `precheck` по `Proposal` пользователя и `post-check` по `Proposal` финального ответа.
+- Enforcement больше не опирается на пересечение слов; он нормализует текст инвариантов в `Constraint` и применяет их только если они релевантны текущему proposal.
+- При недостатке данных guard не делает ложный `REFUSE`: запрет срабатывает только когда proposal действительно нарушает constraint.
+- Каждый ответ содержит явный итог: `Invariant check: OK` или `Invariant check: REFUSED (violates: <ids>)`.
+
+### Управление инвариантами
+
+1. Через UI: кнопка **«Инварианты»** в левой панели (CRUD + ON/OFF + архив).
+2. Через чат-команды (обрабатываются сервером и не отправляются в LLM как обычный user-контент):
+   - `/invariants`
+   - `/invariants add <правило>`
+   - `/invariants add <title> | <правило>`
+   - `/invariants edit <id> <новое правило>`
+   - `/invariants remove <id>`
+   - `/invariants on|off`
 
 ## Стек
 
