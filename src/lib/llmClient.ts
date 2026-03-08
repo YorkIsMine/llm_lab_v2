@@ -1,6 +1,13 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { Invariant } from "@/types/invariant";
+import {
+  INTENT_CONFIDENCE_LEVELS,
+  PLANNING_INTENTS,
+  type IntentConfidence,
+  type PlanningIntent,
+  type PlanningIntentAssessment,
+} from "@/types/taskLifecycle";
 
 function getOpenAI(): OpenAI {
   const key = process.env.OPENAI_API_KEY;
@@ -34,6 +41,22 @@ export interface InvariantCriticAssessment {
   violates: boolean;
   violatedIds: string[];
   summary: string;
+}
+
+function normalizePlanningIntent(value: unknown): PlanningIntent {
+  const candidate = String(value ?? "").trim();
+  if (PLANNING_INTENTS.includes(candidate as PlanningIntent)) {
+    return candidate as PlanningIntent;
+  }
+  return "ambiguous";
+}
+
+function normalizeIntentConfidence(value: unknown): IntentConfidence {
+  const candidate = String(value ?? "").trim();
+  if (INTENT_CONFIDENCE_LEVELS.includes(candidate as IntentConfidence)) {
+    return candidate as IntentConfidence;
+  }
+  return "low";
 }
 
 /**
@@ -125,6 +148,83 @@ Rules:
     violates: parsed.violates === true || violatedIds.length > 0,
     violatedIds,
     summary: typeof parsed.summary === "string" ? parsed.summary.trim() : "",
+  };
+
+  const usage = response.usage
+    ? { promptTokens: response.usage.prompt_tokens, completionTokens: response.usage.completion_tokens }
+    : undefined;
+
+  return { assessment: safe, usage };
+}
+
+export async function createPlanningIntentCompletion(
+  input: {
+    currentState: string;
+    userMessage: string;
+    recentContext: string[];
+    currentPlan: string;
+  },
+  options: ChatCompletionOptions = {}
+): Promise<{ assessment: PlanningIntentAssessment; usage?: { promptTokens: number; completionTokens: number } }> {
+  const systemPrompt = `You evaluate user intent for a task workflow that is currently in planning.
+Return ONLY valid JSON with this exact shape:
+{
+  "intent": "stay_in_planning" | "revise_plan" | "approve_plan_and_execute" | "unrelated" | "ambiguous",
+  "confidence": "low" | "medium" | "high",
+  "rationale": string
+}
+Rules:
+- Judge meaning, not keywords, fixed phrases, regexes, or exact wording.
+- "approve_plan_and_execute" means the user is clearly indicating that the current plan is acceptable and execution may begin now.
+- "revise_plan" means the user is changing requirements, correcting the plan, or asking to adjust it before execution.
+- "stay_in_planning" means the user is still clarifying or discussing the task without approving execution yet.
+- "ambiguous" means intent is uncertain; prefer ambiguous over approval when unsure.
+- "unrelated" means the message is off-topic or social and does not advance the task.
+- Do not decide whether a transition is legally allowed. Only classify semantic intent.`;
+
+  const recentContext = input.recentContext.length > 0 ? input.recentContext.join("\n") : "(no recent context)";
+  const currentPlan = input.currentPlan.trim() || "(no current plan snapshot)";
+
+  const openai = getOpenAI();
+  const response = await openai.chat.completions.create({
+    model: options.model ?? "gpt-4o-mini",
+    messages: [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: `Current state: ${input.currentState}
+
+Current plan version:
+${currentPlan}
+
+Recent dialogue context:
+${recentContext}
+
+Last user message:
+${input.userMessage}`,
+      },
+    ],
+    max_tokens: options.maxTokens ?? 300,
+    temperature: options.temperature ?? 0,
+    response_format: { type: "json_object" },
+  });
+
+  const raw = response.choices[0]?.message?.content?.trim() ?? "{}";
+  let parsed: PlanningIntentAssessment;
+  try {
+    parsed = JSON.parse(raw) as PlanningIntentAssessment;
+  } catch {
+    parsed = {
+      intent: "ambiguous",
+      confidence: "low",
+      rationale: "Could not parse planning intent response.",
+    };
+  }
+
+  const safe: PlanningIntentAssessment = {
+    intent: normalizePlanningIntent(parsed.intent),
+    confidence: normalizeIntentConfidence(parsed.confidence),
+    rationale: typeof parsed.rationale === "string" ? parsed.rationale.trim() : "",
   };
 
   const usage = response.usage

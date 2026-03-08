@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { presentTaskState } from "@/services/taskLifecycleService";
 import { coerceAgentPhase } from "@/types/agentPhase";
 
 /** POST /api/sessions — create new chat */
@@ -11,7 +12,7 @@ export async function POST() {
     return NextResponse.json({
       id: session.id,
       title: session.title,
-      phase: coerceAgentPhase(session.agentPhase),
+      ...presentTaskState(coerceAgentPhase(session.agentPhase)),
       createdAt: session.createdAt.toISOString(),
       updatedAt: session.updatedAt.toISOString(),
     });
@@ -31,7 +32,7 @@ export async function GET() {
       sessions.map((s) => ({
         id: s.id,
         title: s.title,
-        phase: coerceAgentPhase(s.agentPhase),
+        ...presentTaskState(coerceAgentPhase(s.agentPhase)),
         createdAt: s.createdAt.toISOString(),
         updatedAt: s.updatedAt.toISOString(),
       }))

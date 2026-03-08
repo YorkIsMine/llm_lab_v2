@@ -3,6 +3,7 @@
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { MemoryInspectorPanel } from "@/components/MemoryInspectorPanel";
+import { TaskStateIndicator } from "@/components/TaskStateIndicator";
 import { DEFAULT_AGENT_PHASE, type AgentPhase } from "@/types/agentPhase";
 
 interface Message {
@@ -20,15 +21,9 @@ interface TokenUsage {
 
 interface MessagesResponse {
   phase: AgentPhase;
+  currentState?: AgentPhase;
   messages: Message[];
 }
-
-const PHASE_BADGE_STYLES: Record<AgentPhase, string> = {
-  Planning: "text-[rgb(var(--cyber-muted))] border-[rgba(255,255,255,0.25)] bg-[rgba(255,255,255,0.06)]",
-  Execution: "text-[rgb(var(--cyber-cyan))] border-[rgba(0,245,255,0.35)] bg-[rgba(0,245,255,0.08)]",
-  Validation: "text-[rgb(var(--cyber-magenta))] border-[rgba(255,0,255,0.35)] bg-[rgba(255,0,255,0.08)]",
-  Done: "text-[#8bff7f] border-[rgba(139,255,127,0.35)] bg-[rgba(139,255,127,0.08)]",
-};
 
 function isInvariantCommand(text: string): boolean {
   return /^\/invariants\b/i.test(text.trim());
@@ -74,7 +69,7 @@ export default function ChatPage() {
         } else {
           const typed = data as MessagesResponse;
           setMessages(Array.isArray(typed.messages) ? typed.messages : []);
-          setPhase(typed.phase ?? DEFAULT_AGENT_PHASE);
+          setPhase(typed.currentState ?? typed.phase ?? DEFAULT_AGENT_PHASE);
         }
       } else if (res.status === 404) {
         router.replace("/");
@@ -138,8 +133,8 @@ export default function ChatPage() {
         setLastUsage(assistant.usage);
         setTotalSessionTokens((t) => t + assistant.usage.totalTokens);
       }
-      if (assistant.phase) {
-        setPhase(assistant.phase as AgentPhase);
+      if (assistant.currentState || assistant.phase) {
+        setPhase((assistant.currentState ?? assistant.phase) as AgentPhase);
       }
       setMessages((prev) =>
         prev.map((m) =>
@@ -177,13 +172,9 @@ export default function ChatPage() {
       <div className="flex-1 min-h-0 flex justify-center">
         <div className="w-full max-w-xl flex flex-col flex-1 min-h-0">
           <header className="flex items-center justify-between shrink-0 py-3 px-4 border-b border-[rgba(0,245,255,0.2)]">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-4">
               <span className="text-[10px] text-[rgb(var(--cyber-muted))] uppercase tracking-[0.2em]">Чат</span>
-              <span
-                className={`text-[10px] uppercase tracking-[0.2em] px-2 py-1 border rounded-sm ${PHASE_BADGE_STYLES[phase]}`}
-              >
-                {phase}
-              </span>
+              <TaskStateIndicator currentState={phase} />
             </div>
             <button
               type="button"

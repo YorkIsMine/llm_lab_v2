@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { sendMessage } from "@/services/chatService";
 import { coerceAgentPhase } from "@/types/agentPhase";
+import { presentTaskState } from "@/services/taskLifecycleService";
 
 /** GET /api/sessions/:id/messages — history */
 export async function GET(
@@ -26,7 +27,7 @@ export async function GET(
     }
 
     return NextResponse.json({
-      phase: coerceAgentPhase(session.agentPhase),
+      ...presentTaskState(coerceAgentPhase(session.agentPhase)),
       messages: messages.map((m) => ({
         id: m.id,
         sessionId: m.sessionId,

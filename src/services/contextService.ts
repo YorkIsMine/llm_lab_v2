@@ -2,6 +2,7 @@ import type { ChatMessageParam } from "@/lib/llmClient";
 import * as memory from "./memoryService";
 import type { AgentPhase } from "@/types/agentPhase";
 import type { Constraint, GuardDecision, Invariant, ProposalExtraction } from "@/types/invariant";
+import type { ApprovedPlanSnapshot, ExecutionArtifacts, ValidationReport } from "@/types/taskLifecycle";
 import { formatConstraintForPrompt } from "./invariantConstraints";
 
 const BASE_SYSTEM_PROMPT = `You are a helpful assistant. You have access to:
@@ -10,26 +11,26 @@ const BASE_SYSTEM_PROMPT = `You are a helpful assistant. You have access to:
 Use them to personalize and stay consistent. When the user confirms preferences or durable facts, they will be stored in long-term memory.`;
 
 const PHASE_RULES: Record<AgentPhase, string> = {
-  Planning: `CURRENT_PHASE=Planning
+  planning: `CURRENT_PHASE=planning
 Rules:
 - Do NOT execute the task.
 - Do NOT provide final deliverables, ready code, patches, diffs, or complete solution text.
 - Ask clarifying questions required to execute correctly.
 - Provide a short execution plan (2-5 steps).
-- End with an explicit confirmation request: user must reply "приступай" to move forward.`,
-  Execution: `CURRENT_PHASE=Execution
+- Ask the user to confirm in meaning when execution may start; do not require any fixed phrase.`,
+  execution: `CURRENT_PHASE=execution
 Rules:
-- Execute the already confirmed task.
+- Execute strictly against the approved plan snapshot.
 - Provide the concrete result (code, instructions, edits, or explanation requested by the user).
 - Do not mention internal state machine or hidden metadata.`,
-  Validation: `CURRENT_PHASE=Validation
+  validation: `CURRENT_PHASE=validation
 Rules:
-- Validate the produced result against requirements.
+- Validate the produced result against the approved plan and actual execution artifacts.
 - Return a checklist of what is done/not done.
 - List risks and verification steps.`,
-  Done: `CURRENT_PHASE=Done
+  completed: `CURRENT_PHASE=completed
 Rules:
-- Give a short summary of what was delivered.
+- Give a short summary of what was delivered and successfully validated.
 - Offer one concise next-step recommendation.`,
 };
 
@@ -47,6 +48,14 @@ export interface ComposeContextInput {
   workingMemory: memory.WorkingMemoryView | null;
   longTermMemory: memory.LongTermMemoryItem[];
   invariantContext?: PromptInvariantContext;
+  workflowContext?: WorkflowPromptContext;
+}
+
+export interface WorkflowPromptContext {
+  currentState: AgentPhase;
+  approvedPlanSnapshot?: ApprovedPlanSnapshot | null;
+  executionArtifacts?: ExecutionArtifacts | null;
+  validationReport?: ValidationReport | null;
 }
 
 function formatInvariantSystemBlock(invariantContext?: PromptInvariantContext): string | null {
@@ -84,11 +93,61 @@ function formatInvariantSystemBlock(invariantContext?: PromptInvariantContext): 
   ].join("\n");
 }
 
+function formatWorkflowSystemBlock(workflowContext?: WorkflowPromptContext): string | null {
+  if (!workflowContext) return null;
+
+  const approvedPlan = workflowContext.approvedPlanSnapshot
+    ? [
+        `Goal: ${workflowContext.approvedPlanSnapshot.goal || "(not captured)"}`,
+        workflowContext.approvedPlanSnapshot.plan.length > 0
+          ? `Plan:\n${workflowContext.approvedPlanSnapshot.plan.map((step, index) => `${index + 1}. ${step}`).join("\n")}`
+          : "Plan: (not captured)",
+      ].join("\n")
+    : "Approved plan snapshot: (not available)";
+
+  const executionArtifacts = workflowContext.executionArtifacts
+    ? [
+        `Execution artifact status: ${workflowContext.executionArtifacts.status}`,
+        workflowContext.executionArtifacts.progressSummary
+          ? `Execution summary: ${workflowContext.executionArtifacts.progressSummary}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : "Execution artifact: (not available)";
+
+  const validationReport = workflowContext.validationReport
+    ? [
+        `Validation report status: ${workflowContext.validationReport.status}`,
+        workflowContext.validationReport.assessment
+          ? `Validation passed: ${workflowContext.validationReport.assessment.passed ? "yes" : "no"}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : "Validation report: (not available)";
+
+  return [
+    "WORKFLOW STATE:",
+    `current_state=${workflowContext.currentState}`,
+    "",
+    approvedPlan,
+    "",
+    executionArtifacts,
+    "",
+    validationReport,
+  ].join("\n");
+}
+
 export function composeContextMessages(input: ComposeContextInput): ChatMessageParam[] {
   const parts: string[] = [BASE_SYSTEM_PROMPT, PHASE_RULES[input.phase]];
   const invariantBlock = formatInvariantSystemBlock(input.invariantContext);
   if (invariantBlock) {
     parts.push("\n" + invariantBlock);
+  }
+  const workflowBlock = formatWorkflowSystemBlock(input.workflowContext);
+  if (workflowBlock) {
+    parts.push("\n" + workflowBlock);
   }
 
   if (input.longTermMemory.length > 0) {
@@ -119,7 +178,8 @@ export function composeContextMessages(input: ComposeContextInput): ChatMessageP
 export async function buildContextForSession(
   sessionId: string,
   phase: AgentPhase,
-  invariantContext?: PromptInvariantContext
+  invariantContext?: PromptInvariantContext,
+  workflowContext?: WorkflowPromptContext
 ): Promise<ChatMessageParam[]> {
   const [short, working, longTermForSession] = await Promise.all([
     memory.getShortMemory(sessionId),
@@ -133,5 +193,6 @@ export async function buildContextForSession(
     workingMemory: working,
     longTermMemory: longTermForSession,
     invariantContext,
+    workflowContext,
   });
 }

@@ -11,14 +11,18 @@ datasource db {
 }
 
 model ChatSession {
-  id        String   @id @default(cuid())
-  title     String   @default("New Chat")
-  agentPhase String  @default("Planning")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                   String           @id @default(cuid())
+  title                String           @default("New Chat")
+  agentPhase           String           @default("planning")
+  approvedPlanSnapshot String?
+  executionArtifacts   String?
+  validationReport     String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
 
-  messages      Message[]
-  workingMemory WorkingMemory[]
+  messages        Message[]
+  workingMemory   WorkingMemory[]
+  taskTransitions TaskTransition[]
 
   @@index([updatedAt])
 }
@@ -89,4 +93,22 @@ model AssistantSetting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+model TaskTransition {
+  id           String   @id @default(cuid())
+  sessionId    String
+  fromState    String
+  toState      String
+  status       String   @default("applied") // "applied" | "blocked"
+  reason       String
+  cause        String
+  metadataJson String?
+  createdAt    DateTime @default(now())
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([sessionId, createdAt])
+  @@index([status, createdAt])
 }

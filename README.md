@@ -5,16 +5,15 @@
 
 ## Фазовая модель агента
 
-Для каждого чата хранится состояние агента: `Planning | Execution | Validation | Done`.
+Для каждого чата хранится backend-authoritative lifecycle задачи: `planning | execution | validation | completed`.
 
-- Любой новый запрос пользователя обрабатывается в `Planning`: ассистент задаёт уточняющие вопросы, даёт короткий план и просит явное подтверждение `приступай`.
-- Переход в `Execution` происходит только при явной команде (`приступай`, регистронезависимо, с пунктуацией; поддерживаются и эквиваленты).
-- После выполнения запускается `Validation`: формируется чек-лист соответствия, риски и шаги проверки.
-- При успешной проверке состояние переходит в `Done`.
-- Если пользователь пишет `готово` в фазе `Execution` или `Validation`, чат принудительно переводится в `Done`.
-- После `Done` любой новый пользовательский запрос снова стартует цикл с `Planning`.
-
-Состояние хранится в `ChatSession.agentPhase` (SQLite), поэтому сохраняется между перезагрузками страницы.
+- Источник истины — state machine в коде, а не промпт модели.
+- `planning` допускает только уточнение/обновление плана и остаётся активным, пока semantic intent evaluator не определит `approve_plan_and_execute`.
+- Переход `planning -> execution` разрешается только при наличии `approvedPlanSnapshot`.
+- После `execution` всегда фиксируются execution artifacts и выполняется переход в `validation`.
+- `completed` возможен только после успешного `validation` с сохранённым validation report.
+- Все переходы и blocked attempts пишутся в `TaskTransition`; approved plan, execution artifacts и validation report сохраняются в `ChatSession`.
+- Состояние продолжает восстанавливаться после паузы, потому что текущий lifecycle хранится в SQLite.
 
 ## Требования
 
@@ -57,11 +56,11 @@
 
 ## API
 
-- `POST /api/sessions` — создать чат (в ответе есть `phase`)
-- `GET /api/sessions` — список чатов (для каждого есть `phase`)
+- `POST /api/sessions` — создать чат (в ответе есть `phase` и `currentState`)
+- `GET /api/sessions` — список чатов (для каждого есть `phase` и `currentState`)
 - `DELETE /api/sessions/:id` — удалить чат (каскадно удаляются сообщения и рабочая память; долговременная сохраняется)
-- `GET /api/sessions/:id/messages` — история сообщений + текущая фаза (`{ phase, messages }`)
-- `POST /api/sessions/:id/messages` — отправить сообщение (body: `{ "content": "..." }`), в ответе возвращается `phase`
+- `GET /api/sessions/:id/messages` — история сообщений + текущее состояние (`{ phase, currentState, messages }`)
+- `POST /api/sessions/:id/messages` — отправить сообщение (body: `{ "content": "..." }`), в ответе возвращаются `phase` и `currentState`
 - `GET /api/sessions/:id/memory` — short / working / long-term память для чата
 - `GET /api/memory/long-term?scope=user|global` — долговременная память
 - `POST /api/memory/long-term` — создать/обновить запись (body: `{ "scope", "id", "contentText", "contentJson", "tags" }`)
@@ -71,14 +70,15 @@
 - `PATCH /api/invariants/:id` — редактировать инвариант
 - `DELETE /api/invariants/:id` — архивировать инвариант
 
-## Расширение фаз
+## Расширение lifecycle
 
-Ключевая логика автомата находится в `src/services/agentPhaseMachine.ts`.
+Ключевая логика workflow находится в:
 
-- Добавление/изменение переходов: обновить функции `resolvePhaseForUserMessage`, `transitionAfterExecution`, `transitionAfterValidation`.
-- Правила поведения модели по фазам: `src/services/contextService.ts` (`CURRENT_PHASE=...` + правила).
-- Валидация результата: `createValidationCompletion` в `src/lib/llmClient.ts`.
-- Отображение текущей фазы в интерфейсе: `src/app/chat/[id]/page.tsx`.
+- `src/services/agentPhaseMachine.ts` — закрытый набор состояний, разрешённые переходы, guards, blocked transition replies.
+- `src/services/taskLifecycleService.ts` — персистентные snapshots/artifacts/report и `TaskTransition` history.
+- `src/services/chatService.ts` — orchestration одного user-turn через planning/execution/validation/completed.
+- `src/lib/llmClient.ts` — structured semantic intent evaluator и structured validation.
+- `src/app/chat/[id]/page.tsx` + `src/components/TaskStateIndicator.tsx` — видимый state indicator в UI.
 
 ## Memory Inspector
 

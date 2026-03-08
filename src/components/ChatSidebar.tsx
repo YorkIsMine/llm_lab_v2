@@ -10,6 +10,7 @@ interface Session {
   id: string;
   title: string;
   phase: AgentPhase;
+  currentState?: AgentPhase;
   createdAt: string;
   updatedAt: string;
 }
@@ -128,7 +129,12 @@ export function ChatSidebar() {
                         : "border-transparent text-[rgb(var(--cyber-muted))] hover:bg-[rgba(0,245,255,0.06)] hover:border-[rgba(0,245,255,0.3)] hover:text-[rgb(var(--cyber-text))]"
                     }`}
                   >
-                    <span className="truncate flex-1 text-sm font-medium">{s.title}</span>
+                    <div className="min-w-0 flex-1">
+                      <span className="truncate block text-sm font-medium">{s.title}</span>
+                      <span className="text-[9px] uppercase tracking-[0.18em] text-[rgb(var(--cyber-muted))]">
+                        {s.currentState ?? s.phase}
+                      </span>
+                    </div>
                     <button
                       type="button"
                       onClick={(e) => deleteSession(e, s.id)}

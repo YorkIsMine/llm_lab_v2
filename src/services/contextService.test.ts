@@ -4,7 +4,7 @@ import { composeContextMessages } from "./contextService";
 
 test("invariants are injected as separate system block and not mixed into dialogue history", () => {
   const messages = composeContextMessages({
-    phase: "Planning",
+    phase: "planning",
     shortMemory: {
       type: "short",
       description: "Last 10 messages",
@@ -71,11 +71,28 @@ test("invariants are injected as separate system block and not mixed into dialog
         safeAlternatives: [],
       },
     },
+    workflowContext: {
+      currentState: "planning",
+      approvedPlanSnapshot: {
+        goal: "Сделать endpoint",
+        plan: ["Добавить route", "Покрыть тестом"],
+        decisions: [],
+        constraints: [],
+        source: "working_memory_json",
+        capturedAt: new Date().toISOString(),
+        approvedAt: new Date().toISOString(),
+        approvedByMessage: "Можно начинать",
+      },
+      executionArtifacts: null,
+      validationReport: null,
+    },
   });
 
   assert.equal(messages[0].role, "system");
   assert.match(String(messages[0].content), /INVARIANTS \(non-negotiable\)/);
   assert.match(String(messages[0].content), /NORMALIZED CONSTRAINTS/);
+  assert.match(String(messages[0].content), /WORKFLOW STATE/);
+  assert.match(String(messages[0].content), /current_state=planning/);
   assert.match(String(messages[0].content), /\[inv-100:c1\]/);
   assert.match(String(messages[0].content), /\[inv-100\]/);
 
